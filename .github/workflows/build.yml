@@ -1,0 +1,94 @@
+name: Build RemoteSwitch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Create source
+        run: |
+          cat > RemoteSwitch.m <<'EOF'
+          #import <Foundation/Foundation.h>
+          #import <UIKit/UIKit.h>
+
+          __attribute__((constructor))
+          static void RemoteSwitchInit(void) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                  NSURL *url = [NSURL URLWithString:@"https://raw.githubusercontent.com/hongyuanxianghyx-netizen/ipa-control/main/status.json"];
+
+                  NSURLSessionDataTask *task =
+                  [[NSURLSession sharedSession]
+                   dataTaskWithURL:url
+                   completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+
+                      if (error || !data) {
+                          return;
+                      }
+
+                      NSDictionary *json =
+                      [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+
+                      NSNumber *enabled = json[@"enabled"];
+
+                      if (enabled && !enabled.boolValue) {
+                          dispatch_async(dispatch_get_main_queue(), ^{
+                              UIAlertController *alert =
+                              [UIAlertController alertControllerWithTitle:@"服务已停用"
+                                                                  message:@"当前版本已被远程停用。"
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+
+                              UIWindow *window = nil;
+
+                              for (UIWindowScene *scene in
+                                   [UIApplication sharedApplication].connectedScenes) {
+                                  if (scene.activationState ==
+                                      UISceneActivationStateForegroundActive) {
+                                      window = scene.windows.firstObject;
+                                      break;
+                                  }
+                              }
+
+                              UIViewController *vc = window.rootViewController;
+
+                              while (vc.presentedViewController) {
+                                  vc = vc.presentedViewController;
+                              }
+
+                              if (vc) {
+                                  [vc presentViewController:alert animated:YES completion:^{
+                                      exit(0);
+                                  }];
+                              } else {
+                                  exit(0);
+                              }
+                          });
+                      }
+                  }];
+
+                  [task resume];
+              });
+          }
+          EOF
+
+      - name: Build dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+
+          clang \
+            -dynamiclib \
+            -arch arm64 \
+            -isysroot "$SDK" \
+            -framework Foundation \
+            -framework UIKit \
+            -miphoneos-version-min=10.0 \
+            -o RemoteSwitch.dylib \
+            RemoteSwitch.m
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemoteSwitch
+          path: RemoteSwitch.dylib
